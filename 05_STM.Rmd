@@ -52,7 +52,7 @@ library(ggplot2)
 
 ```{r}
 
-setwd("C:/Manjiri Satam_created/Hertie_study/Thesis/Final")
+setwd(".../Thesis/Final")
 
 raw <- read.csv("energy_clean.csv", header = TRUE, stringsAsFactors = FALSE)
 
