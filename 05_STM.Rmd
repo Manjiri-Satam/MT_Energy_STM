@@ -1,0 +1,1383 @@
+
+---
+title: "Structural Topic Modelling- Final Version"
+date: "April 2025"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+    toc: true
+    toc_float: true
+    number_sections: false
+
+---
+
+This file is used for running STM (Structural Topic modelling).
+
+- dataset used and cleaned can be found on github
+- based on earlier 4 colab files:
+
+-- 01_txt_to_csv_and_merge.ipynb	
+-- 02_add_continents_and_clean.ipynb	
+-- 03_remove_french_translate.ipynb
+-- 04_preprocessing_nlp.ipynb
+
+This file uses "energy_clean.csv" which is the output of 04_preprocessing_nlp.ipynb.
+
+# Download and Load Packages
+
+```{r, warning=FALSE, message=FALSE, results='hide'}
+
+library("quanteda") # Using quanteda as STM does not allow bigrams natively
+library("stm")
+library(textstem)  # for lemmatization
+
+library(tidyverse)
+library(dplyr)
+
+library(stringi)
+library(stringr)
+library(stringdist)
+
+library(igraph)
+library(splines)
+library(tm)
+library(RColorBrewer)
+library(stminsights)
+library(ggplot2)
+
+```
+
+# Load the Data
+
+```{r}
+
+setwd("C:/Manjiri Satam_created/Hertie_study/Thesis/Final")
+
+raw <- read.csv("energy_clean.csv", header = TRUE, stringsAsFactors = FALSE)
+
+```
+
+# Create a UID & remove unnecessary columns
+
+```{r}
+
+# UID 
+raw <- raw %>%
+  group_by(Year) %>%
+  mutate(UID = str_c("P_", Year, "_", row_number())) %>%
+  ungroup()
+
+# remove columns not required
+
+raw_clean <- raw %>% 
+  select(Year, CrsID, ProjectTitle, SectorCode, LongDescription, ClimateMitigation, ClimateAdaptation, DonorName, RecipientName, RegionName, USD_Commitment, USD_Disbursement, USD_Received, LD_clean, UID) %>% 
+  relocate(UID, .before = 1)
+
+
+
+# Save as CSV
+write_csv(raw_clean, "energy_clean_UID.csv")
+
+```
+
+# Quick Datachecks
+
+Let's do some quick data checks before we proceed 
+
+```{r}
+
+#let's look at the data
+
+head(raw_clean)
+colnames(raw_clean)
+
+```
+
+
+
+```{r}
+# Let's check the number of NAs in each column
+sapply(raw_clean, function(x) sum(is.na(x)))
+
+```
+
+# EDA
+
+## Projects per year
+
+```{r}
+
+#check how many projects are there per year
+
+raw_clean %>% group_by(Year) %>% count() %>% ungroup()
+
+
+```
+
+```{r}
+# plot projects per year
+
+raw_clean %>% 
+  group_by(Year) %>% 
+  count() %>% 
+  ggplot(aes(x = Year, y = n)) +
+  geom_point() +
+  geom_line(size = 1) +
+  labs(title = "Count of Projects by Year",
+       x = "Year",
+       y = "Number of Projects") +
+  theme_minimal()
+
+```
+
+## Sectorcode
+
+
+```{r}
+
+#check how many observations are there per in sectorcode
+
+raw_clean %>% group_by(SectorCode) %>% count() %>% ungroup() %>% arrange(desc(n))
+
+n_distinct(raw_clean$SectorCode)
+
+```
+
+
+
+```{r}
+raw_clean %>% 
+  group_by(Year, SectorCode) %>% 
+  count() %>% 
+  ggplot(aes(x = Year, y = n, color = as.factor(SectorCode))) +
+  geom_line(size = 1) +
+  labs(title = "Count of Projects by Year and SectorCode",
+       x = "Year",
+       y = "Number of Projects",
+       color = "SectorCode") +
+  theme_minimal()
+```
+
+
+## Climate Mitigation
+
+
+```{r}
+
+# mitigation
+
+raw_clean %>% 
+  count(ClimateMitigation) %>% 
+  mutate(percent = round(100 * n / sum(n), 1)) %>% 
+  arrange(desc(n))
+
+```
+
+```{r}
+
+raw_clean %>% 
+  group_by(Year, ClimateMitigation) %>% 
+  count() %>% 
+  ggplot(aes(x = Year, y = n, color = as.factor(ClimateMitigation))) +
+  geom_line(size = 1) +
+  labs(title = "Count of Projects by Year and ClimateMitigation",
+       x = "Year",
+       y = "Number of Projects",
+       color = "ClimateMitigation") +
+  theme_minimal()
+
+```
+
+## Climate Adaptation
+
+```{r}
+
+# adaptation - check how many observations are there 
+
+raw_clean %>% 
+  count(ClimateAdaptation) %>% 
+  mutate(percent = round(100 * n / sum(n), 1)) %>% 
+  arrange(desc(n))
+
+
+```
+
+```{r}
+
+raw_clean %>% 
+  group_by(Year, ClimateAdaptation) %>% 
+  count() %>% 
+  ggplot(aes(x = Year, y = n, color = as.factor(ClimateAdaptation))) +
+  geom_line(size = 1) +
+  labs(title = "Count of Projects by Year and ClimateAdaptation",
+       x = "Year",
+       y = "Number of Projects",
+       color = "ClimateAdaptation") +
+  theme_minimal()
+
+```
+
+
+
+
+## Recipient Region
+
+```{r}
+
+# Region 
+
+#Geographical region of the recipient country/territory.
+
+raw_clean %>% group_by(RegionName) %>% count() %>% ungroup() %>% arrange(desc(n))
+
+
+```
+
+
+
+```{r}
+
+raw_clean %>% 
+  group_by(Year, RegionName) %>% 
+  count() %>% 
+  ggplot(aes(x = Year, y = n, color = as.factor(RegionName))) +
+  geom_line(size = 1) +
+  labs(title = "Count of Projects by Year and Recipient_Region",
+       x = "Year",
+       y = "Number of Projects",
+       color = "Recipient_Region") +
+  theme_minimal()
+
+```
+
+## USD
+
+```{r}
+
+raw_clean %>%
+  group_by(Year) %>%
+  summarise(
+    Commitment = sum(USD_Commitment, na.rm = TRUE),
+    Disbursement = sum(USD_Disbursement, na.rm = TRUE),
+    Received = sum(USD_Received, na.rm = TRUE)
+  ) %>%
+  pivot_longer(cols = c(Commitment, Disbursement, Received),
+               names_to = "Type",
+               values_to = "USD") %>%
+  ggplot(aes(x = Year, y = USD, color = Type)) +
+  geom_line(size = 1) +
+  geom_point() +
+  labs(title = "Annual Financial Flows in Energy Projects",
+       x = "Year",
+       y = "USD (Total)",
+       color = "Flow Type") +
+  theme_minimal()
+
+```
+
+# Model Prep- Create Document Frequency Matrix (DFM)
+
+```{r}
+# lets make a different dataframe before we start the STM work
+
+meta_info <- raw_clean
+
+```
+
+
+## Stemming/Lemmatization and Tokenization
+
+Using quanteda as STM does not allow bigrams natively 
+First, simple one-word tokens, then combine with frequently occurring bi-grams.
+
+
+```{r}
+library(textstem)   # Load early to use lemmatization
+
+# Apply lemmatization directly to your cleaned column
+meta_info$LD_lemma <- lemmatize_strings(meta_info$LD_clean)
+
+# NOW remove textstem and its dependencies
+detach("package:koRpus.lang.en", unload = TRUE, force = TRUE)
+detach("package:koRpus", unload = TRUE, force = TRUE)
+detach("package:textstem", unload = TRUE, force = TRUE)
+
+# Then load quanteda
+library(quanteda)
+```
+
+
+```{r}
+
+# Create corpus
+corpus_obj <- quanteda::corpus(meta_info, text_field = "LD_lemma")
+docnames(corpus_obj) <- meta_info$UID
+
+# Now tokenization and further steps
+customStopwords = c('el', 'et', 'la', 'de', 'les','dans', 'ce', 'des', 'du',  'le','sur', 'par', "en", 'ii', "au", "mi", "eg", "otherwise", "iii","gr", "also","four","six","approximately", "thus","shall")
+
+
+# Tokenize and remove custom stopwords
+toks_clean_unigrams  <- tokens(corpus_obj, remove_punct = TRUE, remove_symbols = TRUE) %>%
+  tokens_remove(pattern = phrase(customStopwords), valuetype = "fixed") %>% 
+  tokens_keep(pattern = "^[a-zA-Z]{2,}$", valuetype = "regex") #Remove single-letter tokens (like 'a', 'l', etc.)
+
+
+#helper function to identify A_B and B_A and just keep A_B
+canonicalize_bigrams <- function(toks_bigram) {
+  tokens(
+    sapply(toks_bigram, function(x) {
+      vapply(x, function(bi) {
+        paste(sort(unlist(strsplit(bi, "_"))), collapse = "_")
+      }, character(1))
+    })
+  )
+}
+
+# Create true bigrams- Remove repeated-word bigrams like "energy_energy"
+toks_bigram <- tokens_ngrams(toks_clean_unigrams, n = 2) %>% 
+  canonicalize_bigrams() %>%
+  tokens_select(pattern = "\\b(\\w+)_\\1\\b",
+                selection = "remove",
+                valuetype = "regex")
+
+
+
+# Build a clean DFM with only proper bigrams
+dfm_bigram <- dfm(toks_bigram) 
+
+
+
+dfm_bigram <- dfm_bigram %>%
+  dfm_trim(min_termfreq = 50, termfreq_type = "count", 
+           max_docfreq = 0.90, docfreq_type = "prop")
+
+
+```
+
+min_termfreq
+- What it means: The minimum number of times a term (like a word or bigram) must appear across all documents to be kept.
+- Increase the value: Only the most common terms will be kept; rarer terms will be removed.
+- Decrease the value: More rare terms will be included, even those that appear just a few times.
+
+termfreq_type = "count"
+- What it means: the total number of times a term appears across all documents (not just how many documents it appears in).
+- If this were "prop" instead, it would consider the proportion of documents that contain the term instead of the total count.
+
+max_docfreq
+- What it means: The maximum number of documents (as a proportion) in which a term can appear before it's considered too common and removed.
+- Increase the value (e.g., 0.95 to 1): Fewer terms will be removed; even very common terms might be kept.
+- Decrease the value (e.g., 0.95 to 0.8): More very common terms will be removed because they appear in too many documents.
+
+docfreq_type = "prop"
+- What it means: the proportion of documents that contain a term (e.g., 0.95 means 95% of documents).
+- If this were "count", it would look at the raw number of documents instead of the proportion.
+
+
+```{r}
+docvars(dfm_bigram) <- meta_info
+```
+
+## Convert to STM format
+
+```{r}
+#Convert to STM format
+dfm_stm <- quanteda::convert(dfm_bigram, to = c("stm"),docvars=docvars(dfm_bigram))
+
+
+#output will have object meta, documents, and vocab
+dfm_stm$meta$Year <- as.numeric(dfm_stm$meta$Year)
+
+docs <- dfm_stm$documents
+vocab <- dfm_stm$vocab
+meta <-dfm_stm$meta
+
+```
+
+# STM Model (Multiple Topics)
+
+```{r}
+
+#convert some variables as factors
+
+factor_vars <- c("SectorCode", "ClimateMitigation", "ClimateAdaptation","DonorName", "RecipientName", "RegionName")
+
+meta[factor_vars] <- lapply(meta[factor_vars], as.factor)
+
+
+```
+
+Number of topics from (10, 15, 20, 25, 35)
+
+```{r}
+
+multi_k_model <- manyTopics(docs,
+                            vocab,
+                            data=meta,
+                            K=c(10, 15, 20, 25, 35),
+                            runs = 2,
+                            prevalence =~ bs(as.numeric(Year), df=5) + 
+                              ClimateMitigation + ClimateAdaptation + RegionName,
+                            init.type = "LDA",
+                            seed=42,
+                            max.em.its=10,
+                            control = list(alpha = 0.5, eta = 0.1))
+ 
+
+saveRDS(multi_k_model, "multi_k_model.rds")
+ 
+read_rds("multi_k_model.rds")
+
+```
+
+Exclusivity: Measures how unique the top words of a topic are (i.e. not shared across topics)
+Range: ~9.5 to 10+ is typical and good.
+
+Semantic Coherence: Measures how coherent the top words are when seen together in the same documents.
+Less negative = better.
+Values range widely depending on corpus size, preprocessing, etc.
+
+## Plot Multiple K Model
+
+
+```{r}
+
+ modelDetails = data.frame(
+   K = numeric(),
+   coherence = numeric(),
+   exclusivity = numeric())
+
+```
+
+
+```{r}
+modelDetails <- data.frame()
+
+for (i in 1:length(multi_k_model$out)) {
+  if (!is.null(multi_k_model$semcoh[[i]]) && !is.null(multi_k_model$exclusivity[[i]])) {
+    modi <- data.frame(
+      coherence = multi_k_model$semcoh[[i]],
+      exclusivity = multi_k_model$exclusivity[[i]],
+      K = multi_k_model$out[[i]]$settings$dim$K
+    )
+    modelDetails <- rbind(modelDetails, modi)
+    
+    cat(K, 
+        " - Exclusivity:", mean(modi$exclusivity, na.rm=TRUE),
+        " - Semantic Coherence:", mean(modi$coherence, na.rm=TRUE),
+        "\n")
+  }
+}
+```
+
+```{r}
+final_model_plot <- ggplot(modelDetails, aes(x = exclusivity, y = coherence, color = factor(K))) +
+  geom_point(size = 2.5, alpha = 0.8) +  # smaller, cleaner dots
+  scale_color_manual(values = c("red", "darkorange", "darkblue", "darkmagenta", "forestgreen")) + 
+  theme_minimal(base_size = 12) +  # remove grey background
+  labs(
+    title = "Semantic Coherence vs Exclusivity by Number of Topics (K)",
+    x = "Exclusivity",
+    y = "Semantic Coherence",
+    color = "Number of Topics (K)"
+  ) +
+  theme(
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    legend.title = element_text(face = "bold"),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid.major.y = element_line(color = "grey80"),
+    panel.grid.major.x = element_line(color = "grey80"),
+    panel.grid.minor = element_blank(),
+    axis.text.y = element_text(size = 10, color = "black", margin = margin(r = 5)),
+    axis.text.x = element_text(color = "black"),
+    axis.title.x = element_text(color = "black"),
+    legend.position = "bottom",
+    legend.box = "horizontal"
+  )
+
+# Save in A4 ratio (recommended: 8 x 6 inches for clean inclusion)
+ggsave("model_selection_coherence_exclusivity.png", final_model_plot, width = 8, height = 6, dpi = 300)
+
+# Also display
+final_model_plot
+
+```
+
+# STM K = 20 topics
+
+
+```{r}
+
+
+model_20_eng <- stm(docs, 
+                vocab, 
+                data=meta, 
+                K=20,
+                prevalence =~ bs(as.numeric(Year), df=5) +
+                              ClimateMitigation + ClimateAdaptation + RegionName,
+                init.type = "LDA", 
+                seed=123, 
+                max.em.its=25,
+                control = list(alpha = 0.5, eta = 0.1)) 
+
+
+```
+
+
+```{r}
+
+saveRDS(model_20_eng, "model_20_eng.rds")
+
+read_rds("model_20_eng.rds")
+
+```
+
+
+# Interpret the model
+
+
+
+```{r}
+
+#Print top words for all topics
+
+topic_labels <- labelTopics(model_20_eng, topics = c(1:model_20_eng$settings$dim$K), n=15)
+
+topic_labels
+
+```
+
+
+save the above in a csv
+
+```{r}
+
+# Convert to tidy format
+labels_tidy <- map_dfr(
+  .x = c("prob", "frex", "lift", "score"),
+  .f = function(metric) {
+    tibble(
+      Topic = 1:nrow(topic_labels[[metric]]),
+      Metric = metric,
+      Words = apply(topic_labels[[metric]], 1, paste, collapse = ", ")
+    )
+  }
+)
+
+# View or save
+print(labels_tidy)
+
+# Save as CSV
+write_csv(labels_tidy, "topic_labels_20_eng.csv")
+
+```
+
+topic proportions per document
+
+```{r}
+# Assuming your model is called model20
+theta_matrix <- model_20_eng$theta  # theta is a document-topic matrix
+
+# Add document IDs if you have them, or use row numbers
+doc_ids <- meta$UID 
+
+# Combine into a data frame
+doc_topic_df <- as.data.frame(theta_matrix)
+doc_topic_df <- cbind(id = doc_ids, doc_topic_df)
+
+# Optional: Rename columns
+colnames(doc_topic_df)[-1] <- paste0("Topic", 1:ncol(theta_matrix))
+
+# Save as CSV
+write.csv(doc_topic_df, "doc_topic_distribution_20_eng.csv", row.names = FALSE)
+
+# Preview
+head(doc_topic_df)
+```
+
+# Create a Topic Name and Theme Lookup Table
+
+```{r}
+
+topic_names_theme <- tribble(
+  
+  ~Topic, ~Name, ~Theme,
+  
+   1, "Climate Programs", "Sustainable Transition",
+   2, "Energy Access", "Access & Equity",
+   3, "Indigenous Energy", "Access & Equity",
+   4, "Performance Monitoring", "Monitoring & Technical Assistance",
+   5, "IDB Projects", "Finance & Institutions",
+   6, "Grid Infrastucture", "Infrastructure & Energy Systems",
+   7, "Solar Access", "Access & Equity",
+   8, "Capacity Deployment", "Monitoring & Technical Assistance",
+   9, "Donor Reporting", "Finance & Institutions",
+  10, "Geothermal Energy", "Infrastructure & Energy Systems",
+  11, "Nuclear Disarmament", "Nuclear Disarmament",
+  12, "Climate Finance Tools", "Finance & Institutions",
+  13, "National Energy Support", "Monitoring & Technical Assistance",
+  14, "Electricity Networks", "Infrastructure & Energy Systems",
+  15, "Electrification Loans", "Finance & Institutions",
+  16, "Thermal & Hydro Plants", "Infrastructure & Energy Systems",
+  17, "Nuclear Safeguards", "Monitoring & Technical Assistance",
+  18, "Green Funds", "Finance & Institutions",
+  19, "Wind & Solar", "Sustainable Transition",
+  20, "Power Subsector Mapping", "Infrastructure & Energy Systems"
+)
+
+```
+
+```{r}
+topic_names_theme$Topic <- as.character(topic_names_theme$Topic)
+```
+
+## theme colors
+
+```{r}
+theme_colors <- c(
+  "Infrastructure & Energy Systems" = "darkblue",
+  "Finance & Institutions" = "red",
+  "Monitoring & Technical Assistance" = "darkorange",
+  "Access & Equity" = "purple4",
+  "Sustainable Transition" = "darkgreen",
+  "Nuclear Disarmament" = "chocolate4"
+)
+```
+
+
+## Correlation Matrix
+
+```{r fig.width=8, fig.height=6, dpi=300}}
+
+#estimates a correlation network between topics
+
+mod.out.corr <- topicCorr(model_20_eng)
+
+cor_matrix <- mod.out.corr$cor
+
+rownames(cor_matrix) <- topic_names_theme$Name
+colnames(cor_matrix) <- topic_names_theme$Name
+
+
+# Save as high-res PNG
+png("correlation_matrix.png", width = 8, height = 6, units = "in", res = 300)
+
+corrplot::corrplot(cor_matrix,
+                   tl.col = "black", # Topic label color
+                   tl.cex = 0.5,     # control label size
+                   col = colorRampPalette(c("darkblue", "white", "darkorange"))(200), # 200 intermediate color steps
+                   tl.srt = 45,              # Rotate labels 45 degrees
+                   addgrid.col = "grey",     # grid color
+                   cl.cex = 0.7,             # legend size (color legend bar)
+                   cl.align.text = "l",      # align colorbar text left
+                   cl.ratio = 0.2)           # make legend (colorbar) thinner
+dev.off()
+
+```
+
+
+## Semantic Coherence and Exclusivity
+
+Semantic Coherence: Measures how often top words in a topic co-occur in documents. Higher (less negative) is better.
+
+Exclusivity: Measures how unique the top words are to a single topic (not shared across many). Higher is better.
+
+```{r}
+# Compute semantic coherence
+semcoh_scores <- semanticCoherence(model = model_20_eng, documents = docs)
+semcoh_scores
+
+# Compute exclusivity
+exclusivity_scores <- exclusivity(model_20_eng)
+exclusivity_scores
+```
+
+```{r}
+
+# Combine for quick comparison
+scores_df <- data.frame(
+  Topic = 1:model_20_eng$settings$dim$K,
+  SemanticCoherence = semcoh_scores,
+  Exclusivity = exclusivity_scores
+)
+
+# Merge topic names and themes
+scores_df$TopicName <- topic_names_theme$Name
+scores_df$Theme <- topic_names_theme$Theme
+
+# visualize
+
+png("topic_quality.png", width = 8, height = 6, units = "in", res = 300)
+
+ggplot(scores_df, aes(x = SemanticCoherence, y = Exclusivity, label = TopicName)) +
+  geom_point(color = "darkblue", size = 2) +
+  geom_text_repel(size = 3, max.overlaps = Inf, force = 2) +
+  #geom_text(nudge_y = 0.02, size = 3) +
+  theme_minimal() +
+  labs(title = "Topic Quality: Semantic Coherence vs Exclusivity",
+       x = "Semantic Coherence",
+       y = "Exclusivity") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+    axis.title = element_text(size = 10),
+    axis.text = element_text(size = 10)
+  )
+
+dev.off()
+```
+
+
+# Influence of Covariates
+
+# Temporal Trend - Year
+
+```{r}
+
+prep_v2 <- estimateEffect(1:20 ~ bs(as.numeric(Year), df=5) +
+                            ClimateMitigation + ClimateAdaptation + RegionName,
+                       stmobj = model_20_eng,
+                       metadata = meta,
+                       documents = docs,
+                       uncertainty = "Global")
+
+```
+
+```{r}
+
+effects_v2_year <- get_effects(estimates = prep_v2, variable = 'Year', type = 'pointestimate')
+
+```
+
+Ridge Plot
+
+```{r}
+effects_v2_year <- effects_v2_year %>% 
+  rename(Topic = topic)
+
+year_effects <- effects_v2_year %>% 
+  left_join(topic_names_theme, by = "Topic")
+  
+year_effects$value <- as.numeric(as.character(year_effects$value))
+  
+```
+
+```{r}
+library(ggridges)
+
+
+# Generate the plot
+ridge_plot <- ggplot(year_effects, 
+                     aes(x = value, y = Name, height = proportion, fill = Theme)) +
+  geom_density_ridges(
+    stat = "identity",
+    scale = 1,  
+    rel_min_height = 0.0001,
+    color = "white",
+    size = 0.3,
+    position = "identity"
+  ) +
+  geom_vline(xintercept = 2014:2023, color = "grey80", linetype = "dashed") +
+  scale_fill_manual(values = theme_colors) +
+  scale_x_continuous(breaks = 2014:2023, limits = c(2014, 2023)) +
+  theme_minimal(base_size = 13) +
+  labs(x = "Year", y = NULL, fill = "Themes") +
+  theme(
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid.major.y = element_line(color = "grey80"),
+    panel.grid.major.x = element_line(color = "grey80"),
+    panel.grid.minor = element_blank(),
+    axis.text.y = element_text(size = 10, color = "black", margin = margin(r = 5)),
+    axis.text.x = element_text(color = "black"),
+    axis.title.x = element_text(color = "black"),
+    legend.position = "bottom",
+    legend.box = "horizontal"
+  )
+
+# Save and open
+ggsave("ridge_year_eff.png", ridge_plot, width = 12, height = 10, dpi = 300)
+browseURL("ridge_year_eff.png")
+
+
+```
+
+
+## Regional Effect- RegionName
+
+```{r}
+
+
+prep_region <- estimateEffect(1:20 ~ RegionName,
+                       stmobj = model_20_eng,
+                       metadata = meta,
+                       documents = docs,
+                       uncertainty = "Global")
+
+```
+
+
+```{r}
+effects_v2_region <- get_effects(estimates = prep_region, variable = 'RegionName', type ='pointestimate')
+```
+
+```{r}
+effects_v2_region <- effects_v2_region %>% 
+  rename(Topic = topic)
+```
+
+
+```{r}
+
+region_effects <- effects_v2_region %>% 
+  left_join(topic_names_theme, by = "Topic")
+  
+```
+
+```{r}
+# Average topic proportions by region
+
+regional_avg <- region_effects %>%
+  group_by(value, Name) %>%
+  summarise(avg_prop = mean(proportion, na.rm = TRUE), .groups = "drop")
+
+```
+
+```{r}
+
+# Global average topic proportions
+
+global_avg <- region_effects %>%
+  group_by(Name) %>%
+  summarise(global_prop = mean(proportion, na.rm = TRUE), .groups = "drop")
+
+```
+
+```{r}
+# Combine both for comparison
+
+regional_comparison <- regional_avg %>%
+  left_join(global_avg, by = "Name") %>%
+  mutate(relative_difference = avg_prop - global_prop) %>% 
+  filter(value != "Regional and Unspecified")
+
+regional_comparison <- regional_comparison %>% 
+  mutate(value = case_when(value %in% c("Caribbean & Central America") ~ "Carib, Central America", TRUE ~ value))
+
+```
+
+```{r}
+
+top_bottom <- regional_comparison %>%
+  group_by(value) %>%
+  slice_max(order_by = relative_difference, n = 5, with_ties = FALSE) %>%
+  bind_rows(
+    regional_comparison %>%
+      group_by(value) %>%
+      slice_min(order_by = relative_difference, n = 5, with_ties = FALSE)
+  ) %>%
+  ungroup() %>%
+  mutate(
+    # combine Topic and Region as one factor to allow within-facet sorting
+    Topic_in_region = paste(Name, value, sep = "___"),
+    Topic_in_region = fct_reorder(Topic_in_region, relative_difference)
+  )
+
+top_bottom <- top_bottom %>%
+  mutate(OverUnder = ifelse(relative_difference > 0, "Overrepresented", "Underrepresented"))
+
+```
+
+
+```{r, fig.height= 15, fig.width= 9}
+
+library(ggforce)
+
+region_topic_plot <- ggplot(top_bottom, 
+                            aes(x = Topic_in_region,
+                                  y = relative_difference,
+                                  fill = OverUnder)) +
+  
+                      geom_col(show.legend = FALSE) +
+  
+                      coord_flip() +
+  
+                      facet_wrap_paginate(~value, scales = "free_y", ncol = 3, page = 1) +
+  
+                      scale_fill_manual(values = c("Overrepresented" = "darkorange", "Underrepresented" = "darkblue")) +
+  
+                      scale_x_discrete(labels = function(x) gsub("___.*", "", x)) +  # Remove region from label
+                      labs(
+                        title = "Topic Emphasis by Region",
+                        subtitle = "Top 5 Overrepresented and Underrepresented Topics Relative to Global Average",
+                        x = "Topic",
+                        y = "← Underrepresented Overrepresented →"
+                      ) +
+                      theme_minimal(base_size = 12) +
+                      theme(
+                        strip.text = element_text(face = "bold", size = 8),
+                        axis.text.y = element_text(size = 6, colour = "black"),
+                        axis.text.x = element_text(size = 6, colour = "black"),
+                        plot.title = element_text(face = "bold", size = 14,hjust = 0.5),
+                        plot.subtitle = element_text(size = 11),
+                        plot.margin = margin(10, 15, 10, 10),
+                        
+                        plot.background = element_rect(fill = "white", color = NA),
+                        panel.background = element_rect(fill = "white", color = NA),
+                        panel.grid.major = element_line(color = "grey90"),
+                        panel.grid.minor = element_blank()
+                      )
+
+
+# Save and open
+ggsave("region_eff_topic_bar.png", region_topic_plot, width = 8, height = 8, dpi = 300)
+browseURL("region_eff_topic_bar.png")
+
+
+```
+
+
+## Climate Mitigation
+
+
+```{r}
+prep_mitigation_v2 <- estimateEffect(1:20 ~ ClimateMitigation,
+                       stmobj = model_20_eng,
+                       metadata = meta,
+                       documents = docs,
+                       uncertainty = "Global")
+```
+
+
+
+```{r}
+effects_v2_miti <- get_effects(estimates = prep_mitigation_v2, 
+                               variable = 'ClimateMitigation', 
+                               type = 'pointestimate')
+```
+
+
+
+```{r}
+effects_miti_diff <- get_effects(estimates = prep_mitigation_v2,
+                                 variable = "ClimateMitigation",
+                                 type = "difference",
+                                 cov_val1 = 1,  # Significant
+                                 cov_val2 = 2,) # principal
+
+```
+
+
+```{r}
+effects_v2_miti <- effects_v2_miti %>% 
+  rename(Topic = topic)
+```
+
+```{r}
+# Filter out 'Not Targeted' (value == 0)
+miti_filtered <- mitigation_effects %>%
+  filter(value %in% c(1, 2)) %>%
+  mutate(value = factor(value, labels = c("Significant", "Principal")))
+```
+
+
+```{r}
+# Plot
+ggplot(miti_filtered, aes(x = proportion, y = Name, color = value)) +
+  geom_point(size = 2) +
+  geom_errorbarh(aes(xmin = lower, xmax = upper), height = 0.2) +
+  scale_color_manual(values = c("darkorange", "forestgreen")) +
+  labs(
+    title = "Effect of Climate Mitigation (Significant & Principal)",
+    x = "Expected Topic Proportion",
+    y = NULL,
+    color = "Mitigation Level"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.text.y = element_text(size = 9),
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.position = "bottom"
+  ) +
+  theme(
+        strip.text = element_text(face = "bold", size = 13),
+        axis.text.y = element_text(size = 10),
+        plot.title = element_text(face = "bold", size = 14),
+        plot.subtitle = element_text(size = 11),
+        plot.margin = margin(10, 15, 10, 10),
+                        
+        plot.background = element_rect(fill = "white", color = NA),
+        panel.background = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_line(color = "grey90"),
+        panel.grid.minor = element_blank()
+        )
+
+# Save and open
+ggsave("miti_eff_separate.png")
+
+
+```
+
+
+```{r}
+
+# Start PNG device
+png("climate_mitigation_diff_plot.png", width = 1200, height = 800, res = 150)
+
+# Plot
+
+plot.estimateEffect(prep_mitigation_v2,
+    covariate = "ClimateMitigation",
+    method = "difference",
+    cov.value1 = 1,  # Significant
+    cov.value2 = 2,  # Principal
+    topics = 1:20,
+    model = model_20_eng,
+    labeltype = "custom",
+    custom.labels = topic_names$Name,
+    add = FALSE,
+    xlab = "More Emphasis in Principal (→) vs Significant (←)",
+    main = "Difference in Topic Proportions: Climate Mitigation Principal vs Significant",
+    xlim = c(-0.08, 0.08),
+    cex = 0.6)+
+  theme(
+        plot.background = element_rect(fill = "white", color = NA),
+        panel.background = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_line(color = "grey90"),
+        panel.grid.minor = element_blank()
+        ) +
+  
+
+# Close the graphics device
+dev.off()
+
+
+```
+
+
+```{r}
+
+miti_diff <- mitigation_effects %>%
+  select(Name, Theme, value, proportion) %>%
+  filter(value %in% c(1, 2)) %>%
+  mutate(value = factor(value, labels = c("Significant", "Principal"))) %>% 
+  pivot_wider(names_from = value, values_from = proportion) %>%
+  mutate(
+    diff =  Significant - Principal  # Significant minus Principal  
+  )
+
+
+# Order topics by difference
+miti_diff$Name <- factor(miti_diff$Name, levels = miti_diff$Name[order(miti_diff$diff)])
+
+
+# Plot
+miti_eff_arrow <- ggplot(miti_diff, aes(x = 0, xend = diff, y = Name, yend = Name, color = Theme)) +
+  geom_segment(arrow = arrow(length = unit(0.15, "cm")), size = 1) +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  scale_color_manual(values = theme_colors) +
+  labs(
+    title = "Difference in Topic Proportions (Significant - Principal)",
+    x = "Topic Proportion Difference",
+    y = NULL,
+    color = "Theme"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.text.y = element_text(size = 9),
+    plot.title = element_text(face = "bold"),
+    legend.position = "bottom",
+                        
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_line(color = "grey90"),
+    panel.grid.minor = element_blank()
+    )
+
+
+# Save and open
+ggsave("miti_eff_arrow.png", miti_eff_arrow)
+browseURL("miti_eff_arrow.png")
+
+```
+
+Positive values (right of zero) → Topic is more emphasized in  Significant (1) mitigation projects
+
+Negative values (left of zero) → Topic is more emphasized in Principal (2) mitigation projects
+
+
+
+## Climate Adaptation
+
+
+```{r}
+prep_adap_v2 <- estimateEffect(1:20 ~ ClimateAdaptation,
+                       stmobj = model_20_eng,
+                       metadata = meta,
+                       documents = docs,
+                       uncertainty = "Global")
+```
+
+
+
+```{r}
+effects_v2_adap <- get_effects(estimates = prep_adap_v2, 
+                               variable = 'ClimateAdaptation', 
+                               type = 'pointestimate')
+```
+
+```{r}
+effects_v2_adap <- effects_v2_adap %>% 
+  rename(Topic = topic)
+```
+
+
+```{r}
+
+adaptation_effects <- effects_v2_adap %>% 
+  left_join(topic_names, by = "Topic") 
+```
+
+
+```{r}
+# Filter out 'Not Targeted' (value == 0)
+adap_filtered <- adaptation_effects %>%
+  filter(value %in% c(1, 2)) %>%
+  mutate(value = factor(value, labels = c("Significant", "Principal")))
+
+# Plot
+adap_eff_separate <- ggplot(adap_filtered, aes(x = proportion, y = Name, color = value)) +
+  geom_point(size = 2) +
+  geom_errorbarh(aes(xmin = lower, xmax = upper), height = 0.2) +
+  scale_color_manual(values = c("darkorange", "forestgreen")) +
+  labs(
+    title = "Effect of Climate Adaptation (Significant & Principal) ",
+    x = "Expected Topic Proportion",
+    y = NULL,
+    color = "Adaptation Level"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.text.y = element_text(size = 9),
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.position = "bottom",
+    
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_line(color = "grey90"),
+    panel.grid.minor = element_blank()
+  )
+
+
+# Save and open
+ggsave("adap_eff_separate.png", adap_eff_separate)
+browseURL("adap_eff_separate.png")
+
+
+```
+
+
+
+```{r}
+
+# Start PNG device
+png("climate_adaptation_diff_plot.png", width = 1200, height = 800, res = 150)
+
+# Plot
+
+plot.estimateEffect(prep_adap_v2,
+    covariate = "ClimateAdaptation",
+    method = "difference",
+    cov.value1 = 1,  # Significant
+    cov.value2 = 2,  # Principal
+    topics = 1:20,
+    model = model_20_eng,
+    labeltype = "custom",
+    custom.labels = topic_names$Name,
+    add = FALSE,
+    xlab = "More Emphasis in Principal (→) vs Significant (←)",
+    main = "Difference in Topic Proportions: Climate Adaptation Principal vs Significant",
+    xlim = c(-0.08, 0.08),
+    cex = 0.6) 
+
+# Close the graphics device
+dev.off()
+  
+```
+
+
+```{r}
+
+adap_diff <- adaptation_effects %>%
+  select(Name, Theme, value, proportion) %>%
+  filter(value %in% c(1, 2)) %>%
+  mutate(value = factor(value, labels = c("Significant", "Principal"))) %>% 
+  pivot_wider(names_from = value, values_from = proportion) %>%
+  mutate(
+    diff =  Significant - Principal  # Significant minus Principal  
+  )
+
+
+# Order topics by difference
+adap_diff$Name <- factor(adap_diff$Name, levels = adap_diff$Name[order(adap_diff$diff)])
+
+
+# Plot
+adap_eff_arrow <- ggplot(adap_diff, aes(x = 0, xend = diff, y = Name, yend = Name, color = Theme)) +
+  geom_segment(arrow = arrow(length = unit(0.15, "cm")), size = 1) +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  scale_color_manual(values = theme_colors) +
+  labs(
+    title = "Difference in Topic Proportions (Significant - Principal)",
+    x = "Topic Proportion Difference",
+    y = NULL,
+    color = "Theme"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.text.y = element_text(size = 9),
+    plot.title = element_text(face = "bold"),
+    legend.position = "bottom",
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_line(color = "grey90"),
+    panel.grid.minor = element_blank()
+  )
+
+
+# Save and open
+ggsave("adap_eff_arrow.png", adap_eff_arrow)
+browseURL("adap_eff_arrow.png")
+
+```
+
+
+Positive values (right of zero) → Topic is more emphasized in  Significant (1) mitigation projects
+
+Negative values (left of zero) → Topic is more emphasized in Principal (2) mitigation projects
+
+
+## Mitigation & Adaptation Together
+
+```{r}
+
+effects_miti_diff <- get_effects(estimates = prep_mitigation_v2,
+                                 variable = "ClimateMitigation",
+                                 type = "difference",
+                                 cov_val1 = 1,  # Significant
+                                 cov_val2 = 2,) # principal
+
+effects_adap_diff <- get_effects(estimates = prep_adap_v2,
+                                 variable = "ClimateAdaptation",
+                                 type = "difference",
+                                 cov_val1 = 1,  # Significant
+                                 cov_val2 = 2,) # principal
+```
+
+
+```{r}
+
+effects_miti_diff <- effects_miti_diff %>% 
+  rename(miti_diff = difference, miti_lower = lower, miti_upper = upper)
+
+effects_adap_diff <- effects_adap_diff %>% 
+  rename(adap_diff = difference, adap_lower = lower, adap_upper = upper)
+
+```
+
+```{r}
+
+both_diff <- effects_miti_diff %>% 
+  left_join(effects_adap_diff, by="topic")
+
+both_diff <- both_diff %>% 
+  rename(Topic = topic)
+
+both_diff <- both_diff %>%
+  mutate(Topic = as.character(Topic))
+
+topic_names_theme <- topic_names_theme %>%
+  mutate(Topic = as.character(Topic))
+
+both_diff <- both_diff %>% 
+  left_join(topic_names_theme, by="Topic")
+
+```
+
+
+```{r}
+both_diff_long <- both_diff %>%
+  pivot_longer(
+    cols = c(miti_diff, adap_diff),
+    names_to = "Type",
+    values_to = "Estimate"
+  ) %>%
+  mutate(
+    Lower = case_when(
+      Type == "miti_diff" ~ miti_lower,
+      Type == "adap_diff" ~ adap_lower
+    ),
+    Upper = case_when(
+      Type == "miti_diff" ~ miti_upper,
+      Type == "adap_diff" ~ adap_upper
+    ),
+    Type = ifelse(Type == "miti_diff", "Mitigation", "Adaptation")
+  ) %>%
+  select(Topic, Name, Type, Estimate, Lower, Upper, Theme)
+
+both_diff_long <- both_diff_long %>%
+  mutate(Theme = as.character(Theme)) %>%
+  mutate(Theme = factor(Theme, levels = names(theme_colors)))
+```
+
+
+```{r}
+# 2. Plot one graph, faceted
+final_plot <- ggplot(both_diff_long, aes(x = Estimate, y = reorder(Name, Estimate), color = Theme)) +
+  geom_point() +
+  
+  geom_errorbarh(aes(xmin = Lower, xmax = Upper), height = 0.2) +
+  
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  
+  facet_wrap(~Type, ncol = 2, scales = "free_x") +  # two panels, separate x-axis
+  
+  labs(
+    x = NULL,
+    y = NULL,
+    title = "Difference in Topic Prevalence for Climate Markers",
+    subtitle = "With a 0.95 confidence intervals",
+    caption = "Positive values: more Significant Marker, Negative values: more Principal Marker",
+  ) +
+  scale_color_manual(values = theme_colors) +
+  
+  theme_minimal(base_size = 12) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid.minor = element_blank(),
+    axis.text.y = element_text(size = 8, colour = "black"),
+    axis.text.x = element_text(size = 8),
+    plot.title = element_text(size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 10, hjust = 0.5),
+    plot.caption = element_text(hjust = 0.5, size = 10),
+    legend.position = "bottom",
+    legend.box = "horizontal",
+    legend.key.size = unit(0.5, "lines"),
+    legend.text = element_text(size = 8),
+    legend.title = element_text(size = 0),
+    legend.spacing.y = unit(0.2, 'cm')
+  )
+
+ggsave("miti_adap_diff_single_plot_colour.png", final_plot, width = 8, height = 8, dpi = 300)
+
+final_plot
+```
+
+
+
+
+
+
