@@ -19,7 +19,7 @@ This repository contains the code, outputs, and visualizations for my Master’s
 
 ## Methodology
 
-- **Data**: OECD CRS project-level data (energy sector, 2014–2023) [Download the dataset](https://data-explorer.oecd.org/vis?fs[0]=Topic%2C1%7CDevelopment%23DEV%23%7COfficial%20Development%20Assistance%20%28ODA%29%23DEV_ODA%23&pg=0&fc=Topic&bp=true&snb=25&df[ds]=dsDisseminateFinalCloud&df[id]=DSD_CRS%40DF_CRS&df[ag]=OECD.DCD.FSD&df[vs]=1.3&dq=DAC..1000.100._T._T.D.Q._T..&to[TIME_PERIOD]=false&lom=LASTNPERIODS&lo=5)
+- **Data**: OECD CRS project-level data (energy sector, 2014–2023) [Access/download the raw data](https://data-explorer.oecd.org/vis?fs[0]=Topic%2C1%7CDevelopment%23DEV%23%7COfficial%20Development%20Assistance%20%28ODA%29%23DEV_ODA%23&pg=0&fc=Topic&bp=true&snb=25&df[ds]=dsDisseminateFinalCloud&df[id]=DSD_CRS%40DF_CRS&df[ag]=OECD.DCD.FSD&df[vs]=1.3&dq=DAC..1000.100._T._T.D.Q._T..&to[TIME_PERIOD]=false&lom=LASTNPERIODS&lo=5)
 - **Approach**: Structural Topic Modeling with covariates:
   - Region
   - Year
