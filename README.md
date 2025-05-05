@@ -1,8 +1,7 @@
-# The Evolution of Energy Aid Discourse: Insights from Structural Topic Modelling
+## The Evolution of Energy Aid Discourse: Insights from Structural Topic Modelling
 
 This repository contains the code, outputs, and visualizations for my Master’s Thesis, which applies Structural Topic Modeling (STM) to project-level data on Official Development Assistance (ODA) in the energy sector.
 
----
 
 ## Repository Contents
 
@@ -16,8 +15,7 @@ This repository contains the code, outputs, and visualizations for my Master’s
 | `doc_topic_distribution_20_eng.csv` | Topic proportions per project |
 | `topic_labels_20_eng.csv` | Final 20 topics with keywords |
 | `*.png` | Visualizations (e.g., model selection, ridge plots, regional trends) |
-
----
+| `satam_manjiri_master_thesis.pdf` | Final version of master thesis |
 
 ## Methodology
 
@@ -28,9 +26,9 @@ This repository contains the code, outputs, and visualizations for my Master’s
   - Climate objective (mitigation/adaptation)
 - **Tools**: Python (preprocessing), R (`stm`) for modeling
 
----
+
 
 ## Author
-Manjiri Satam
+Manjiri Satam \\
 Master's in Data Science for Public Policy, Hertie School, 2025
 
