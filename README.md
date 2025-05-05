@@ -29,6 +29,6 @@ This repository contains the code, outputs, and visualizations for my Master’s
 
 
 ## Author
-Manjiri Satam \\
+Manjiri Satam \
 Master's in Data Science for Public Policy, Hertie School, 2025
 
